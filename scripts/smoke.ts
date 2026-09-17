@@ -29,6 +29,8 @@ import {
   webgpuBlockedDtypes,
 } from '../src/local/ai/webgpuCatalog.ts';
 import { getSettings } from '../src/local/db/settings.ts';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 let failures = 0;
 function check(label: string, ok: boolean, extra = '') {
@@ -574,6 +576,17 @@ async function main() {
   );
   globalThis.fetch = realFetch;
   updateSettings({ ai: { provider: providerBefore } } as any);
+
+  const stylesheet = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8');
+  check(
+    'stylesheet still loads Tailwind plus the local primitives',
+    stylesheet.includes('@tailwind base') &&
+      stylesheet.includes('@tailwind utilities') &&
+      stylesheet.includes('.btn-primary') &&
+      stylesheet.includes('.game-title') &&
+      stylesheet.includes('.chip-on'),
+    `${stylesheet.length} bytes`,
+  );
 
   const defaults = getSettings().ai;
   check(
