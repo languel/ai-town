@@ -1,6 +1,10 @@
-# Build the fully-local (no Convex) app and publish it to GitHub Pages.
+# Build the fully-local (no Convex) app and push dist/ to the gh-pages branch.
 # Arena pins this session to arena/01a0aae7-ai-town; aitownarena is listed so a
 # later rename of the GitHub branch keeps deploying.
+#
+# After the first successful run, turn Pages on once:
+#   Settings → Pages → Deploy from a branch → gh-pages / (root)
+# Then the town is at https://languel.github.io/ai-town/
 name: aitownarena pages
 
 on:
@@ -11,16 +15,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,21 +36,11 @@ jobs:
         run: |
           cp dist/index.html dist/404.html
           touch dist/.nojekyll
-      - uses: actions/configure-pages@v5
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          # First run: create the Pages site (Settings → Pages is otherwise a
-          # one-click the token here can't do from this sandbox).
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com

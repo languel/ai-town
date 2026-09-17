@@ -10,12 +10,13 @@ npm install                    # no native builds or backend services to install
 npm run dev                    # http://localhost:5173
 ```
 
-A static copy is also built to GitHub Pages on every push:
+A static copy is built to the `gh-pages` branch on every push. After the first run, enable it once
+under **Settings → Pages → Deploy from a branch → `gh-pages` / (root)**. Then:
 
 **https://languel.github.io/ai-town/**
 
-Open that URL in its own tab. The Arena / Codespaces preview is an iframe, and Chromium will refuse
-WebGPU (`navigator.gpu`) plus some Hugging Face downloads there — it looks like CORS. A top-level
+Open that URL in its own tab. The Arena preview is an iframe, and Chromium will refuse WebGPU
+(`navigator.gpu`) plus some Hugging Face downloads there — it looks like CORS. A top-level
 `github.io` origin does not have that restriction. The workflow is
 `.github/workflows/pages.yml` (deploys `arena/01a0aae7-ai-town`, and `aitownarena` if the branch is
 renamed).
