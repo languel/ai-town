@@ -183,3 +183,106 @@ p[contenteditable='true']:empty::before {
 .shape-top-left-corner {
   clip-path: polygon(0 0, 100% 0, 0 100%);
 }
+
+/* ---- Local-build UI primitives (the editors live alongside the game now) ---- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 0.25rem;
+  border: 1px solid #743f39;
+  background: #3f2832;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.25rem;
+  color: #ead4aa;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: #4d3140;
+  border-color: #b86f50;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #5a6988;
+  border-color: #8b9bb4;
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #6d7d9d;
+}
+
+.btn-danger {
+  background: #5b1f24;
+  border-color: #a2484d;
+  color: #ffd9d9;
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  border-radius: 0.25rem;
+  border: 1px solid #743f39;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  color: #fff;
+}
+
+.textarea {
+  min-height: 5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: #ead4aa;
+  box-shadow: 0 0 0 2px rgba(234, 212, 170, 0.2);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: #ead4aa66;
+}
+
+.select option {
+  background: #181425;
+}
+
+label > .input,
+label > .select,
+label > .textarea {
+  margin-top: 0.15rem;
+}
+
+/* Range inputs are used for sim tuning; keep them narrow inline. */
+input[type='range'] {
+  accent-color: #b86f50;
+  height: 1.1rem;
+}
+
+input[type='checkbox'] {
+  accent-color: #b86f50;
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+/* Toasts read better with the pixel font. */
+.Toastify__toast {
+  font-family: 'VCR OSD Mono', monospace;
+  font-size: 12px;
+}

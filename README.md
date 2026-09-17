@@ -1,3 +1,12 @@
+> **This branch is the fully-local build.** No Convex, no server, no deploy: the engine, the
+> database (IndexedDB), the model calls and the map/personality editors all run in the browser.
+> `npm install && npm run dev` — then open http://localhost:5173.
+>
+> Everything about this fork — how to point it at Ollama / OpenRouter / LM Studio / a WebGPU model,
+> how the local database and import/export work, and how the port is organized — is documented in
+> **[LOCAL.md](./LOCAL.md)**. The rest of this file is the original upstream README; the hosted
+> Convex client it describes is kept under `legacy/convex-ui/` for reference and is not built.
+
 # AI Town 🏠💻💌
 
 [Live Demo](https://www.convex.dev/ai-town)
