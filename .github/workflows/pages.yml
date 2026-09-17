@@ -35,6 +35,10 @@ jobs:
           cp dist/index.html dist/404.html
           touch dist/.nojekyll
       - uses: actions/configure-pages@v5
+        with:
+          # First run: create the Pages site (Settings → Pages is otherwise a
+          # one-click the token here can't do from this sandbox).
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
