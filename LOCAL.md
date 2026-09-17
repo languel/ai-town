@@ -2,13 +2,23 @@
 
 Everything that used to live on a server now lives in your browser tab: the simulation engine, the
 database, the vector search, the model calls, the personality editor and the map editor. `npm run
-dev`, point it at a model (or don't), and the town is alive. Nothing is deployed, nothing is
-pushed, and the world persists in IndexedDB on your machine.
+dev`, point it at a model (or don't), and the town is alive. The world persists in IndexedDB on
+your machine.
 
 ```bash
 npm install                    # no native builds or backend services to install
 npm run dev                    # http://localhost:5173
 ```
+
+A static copy is also built to GitHub Pages on every push:
+
+**https://languel.github.io/ai-town/**
+
+Open that URL in its own tab. The Arena / Codespaces preview is an iframe, and Chromium will refuse
+WebGPU (`navigator.gpu`) plus some Hugging Face downloads there — it looks like CORS. A top-level
+`github.io` origin does not have that restriction. The workflow is
+`.github/workflows/pages.yml` (deploys `arena/01a0aae7-ai-town`, and `aitownarena` if the branch is
+renamed).
 
 There is no `.env`, no `npx convex dev`, no Docker, no API proxy. The only thing you can configure
 is in-app (⚙️ Model tab).

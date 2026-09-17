@@ -146,7 +146,7 @@ export function newMap(partial: Partial<SerializedWorldMap> = {}): SerializedWor
   return {
     width,
     height,
-    tileSetUrl: partial.tileSetUrl ?? '/assets/gentle-obj.png',
+    tileSetUrl: partial.tileSetUrl ?? 'assets/gentle-obj.png',
     tileSetDimX,
     tileSetDimY,
     tileDim,
@@ -205,7 +205,7 @@ export function normalizeMap(input: any): SerializedWorldMap {
   return {
     width,
     height,
-    tileSetUrl: String(input?.tileSetUrl ?? '/assets/gentle-obj.png'),
+    tileSetUrl: String(input?.tileSetUrl ?? 'assets/gentle-obj.png'),
     tileSetDimX: Math.floor(input?.tileSetDimX ?? 1440),
     tileSetDimY: Math.floor(input?.tileSetDimY ?? 1024),
     tileDim,

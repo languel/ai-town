@@ -152,7 +152,12 @@ export function hubBase(): string {
 async function hubFetch(url: string, signal?: AbortSignal): Promise<any> {
   let response: Response;
   try {
-    response = await fetch(url, { signal, headers: { accept: 'application/json' } });
+    response = await fetch(url, {
+      signal,
+      mode: 'cors',
+      credentials: 'omit',
+      headers: { accept: 'application/json' },
+    });
   } catch (e: any) {
     throw new LLMError(
       `Could not reach ${hubBase()} (${e?.message ?? e}). The model list falls back to the built-in catalog - ` +

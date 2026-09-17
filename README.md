@@ -1,6 +1,9 @@
-> **This branch is the fully-local build.** No Convex, no server, no deploy: the engine, the
-> database (IndexedDB), the model calls and the map/personality editors all run in the browser.
+> **This branch is the fully-local build.** No Convex, no server: the engine, the database
+> (IndexedDB), the model calls and the map/personality editors all run in the browser.
 > `npm install && npm run dev` — then open http://localhost:5173.
+>
+> Hosted (GitHub Pages, same build): **https://languel.github.io/ai-town/** — open it in its own
+> tab so WebGPU isn't blocked by the preview iframe.
 >
 > Everything about this fork — how to point it at Ollama / OpenRouter / LM Studio / a WebGPU model,
 > how the local database and import/export work, and how the port is organized — is documented in

@@ -31,6 +31,7 @@ import {
 import { getSettings } from '../src/local/db/settings.ts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { toAppRelativeAsset } from '../src/local/assets.ts';
 
 let failures = 0;
 function check(label: string, ok: boolean, extra = '') {
@@ -586,6 +587,12 @@ async function main() {
       stylesheet.includes('.game-title') &&
       stylesheet.includes('.chip-on'),
     `${stylesheet.length} bytes`,
+  );
+  check(
+    'asset URLs rebase off the app, not the domain root',
+    toAppRelativeAsset('/assets/gentle-obj.png') === 'assets/gentle-obj.png' &&
+      toAppRelativeAsset('/ai-town/assets/32x32folk.png') === 'assets/32x32folk.png' &&
+      toAppRelativeAsset('assets/gentle-obj.png') === 'assets/gentle-obj.png',
   );
 
   const defaults = getSettings().ai;

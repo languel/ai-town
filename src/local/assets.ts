@@ -11,20 +11,20 @@ import { localDB } from './db/local.ts';
 
 const objectUrls = new Map<string, string>();
 
+/**
+ * Turn a stored texture path into something the browser can fetch from this
+ * page's origin. Root-absolute `/assets/…` paths 404 on GitHub Pages (the app
+ * lives at `/ai-town/`, not `/`), so everything that isn't a real remote URL is
+ * rebased onto `document.baseURI`.
+ */
 export function resolveAssetUrl(url: string): string {
   if (!url) return '';
-  if (/^(https?:|data:|blob:|\.\/|\/)\S*/.test(url) && !url.startsWith('image:')) {
-    if (url.startsWith('/ai-town/')) {
-      // Legacy path used by the hosted Convex demo; the local build serves at "/".
-      return resolveAssetUrl(url.replace('/ai-town/', ''));
-    }
-    return url;
-  }
   if (url.startsWith('image:')) {
     const doc = localDB.get<{ dataUrl: string }>('images', url.slice('image:'.length));
     return doc?.dataUrl ?? '';
   }
-  const relative = url.replace(/^\.\//, '').replace(/^\/+/, '');
+  if (/^(https?:|data:|blob:)/i.test(url)) return url;
+  const relative = toAppRelativeAsset(url);
   if (typeof document !== 'undefined' && document.baseURI) {
     try {
       return new URL(relative, document.baseURI).href;
@@ -33,6 +33,11 @@ export function resolveAssetUrl(url: string): string {
     }
   }
   return relative;
+}
+
+/** Strip `/ai-town/` and a leading slash so the path is relative to the app. */
+export function toAppRelativeAsset(url: string): string {
+  return url.replace(/^\/ai-town\//, '').replace(/^\.\//, '').replace(/^\/+/, '');
 }
 
 export function appAssetUrl(file: string): string {
