@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { PROVIDER_PRESETS, resetSettings, updateSettings, type ProviderKind } from '../db/settings.ts';
+import {
+  DTYPE_CHOICES,
+  PROVIDER_PRESETS,
+  resetSettings,
+  updateSettings,
+  type DTypeChoice,
+  type ProviderKind,
+} from '../db/settings.ts';
+import ModelField from './ModelField.tsx';
 import { useSettings } from '../state.tsx';
 import { probeProvider } from '../ai/chat.ts';
 import { getModelStatus, hasWebgpu, subscribeModelStatus, warmupWebgpu } from '../ai/webgpu.ts';
@@ -60,10 +68,11 @@ export default function SettingsPanel() {
               />
             </Row>
             <Row label="Model">
-              <input
-                className="input"
+              <ModelField
+                slot="server"
                 value={ai.chatModel}
-                onChange={(e) => updateSettings({ ai: { chatModel: e.target.value } })}
+                placeholder={ai.provider === 'ollama' ? 'llama3.2' : 'model id'}
+                onSelect={(id) => updateSettings({ ai: { chatModel: id } })}
               />
             </Row>
           </div>
@@ -72,10 +81,21 @@ export default function SettingsPanel() {
         {ai.provider === 'webgpu' && (
           <div className="mt-3 grid gap-2">
             <Row label="Chat model (HF repo)">
+              <ModelField
+                slot="chat"
+                value={ai.webgpu.chatModel}
+                placeholder="org/model"
+                dtype={ai.webgpu.dtype}
+                onDtype={(dtype) => updateSettings({ ai: { webgpu: { dtype: dtype as DTypeChoice } } })}
+                onSelect={(id) => updateSettings({ ai: { webgpu: { chatModel: id } } })}
+              />
+            </Row>
+            <Row label="Hub API base URL">
               <input
                 className="input"
-                value={ai.webgpu.chatModel}
-                onChange={(e) => updateSettings({ ai: { webgpu: { chatModel: e.target.value } } })}
+                value={ai.hubBase}
+                placeholder="https://huggingface.co"
+                onChange={(e) => updateSettings({ ai: { hubBase: e.target.value } })}
               />
             </Row>
             <Row label="transformers.js URL">
@@ -97,13 +117,26 @@ export default function SettingsPanel() {
                 <option value="wasm">wasm</option>
               </select>
             </Row>
+            <Row label="Precision">
+              <select
+                className="input"
+                value={ai.webgpu.dtype}
+                onChange={(e) => updateSettings({ ai: { webgpu: { dtype: e.target.value as DTypeChoice } } })}
+              >
+                {DTYPE_CHOICES.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {choice} &mdash; {choice === 'auto' ? 'smallest export WebGPU can run' : 'model_q4.onnx etc.'}
+                  </option>
+                ))}
+              </select>
+            </Row>
             <label className="flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
-                checked={ai.webgpu.quantized}
-                onChange={(e) => updateSettings({ ai: { webgpu: { quantized: e.target.checked } } })}
+                checked={ai.webgpu.stripReasoning}
+                onChange={(e) => updateSettings({ ai: { webgpu: { stripReasoning: e.target.checked } } })}
               />
-              quantized weights (smaller download)
+              strip &lt;thinking&gt; blocks from replies
             </label>
             <p className="text-[11px] opacity-70">
               WebGPU in this browser:{' '}
@@ -281,10 +314,15 @@ export default function SettingsPanel() {
         )}
         {ai.embeddingSource === 'webgpu' && (
           <Row label="Embedding model (HF repo)">
-            <input
-              className="input"
+            <ModelField
+              slot="embeddings"
               value={ai.webgpu.embeddingModel}
-              onChange={(e) => updateSettings({ ai: { webgpu: { embeddingModel: e.target.value } } })}
+              placeholder="org/model"
+              dtype={ai.webgpu.embeddingDtype}
+              onDtype={(dtype) =>
+                updateSettings({ ai: { webgpu: { embeddingDtype: dtype as DTypeChoice } } })
+              }
+              onSelect={(id) => updateSettings({ ai: { webgpu: { embeddingModel: id } } })}
             />
           </Row>
         )}

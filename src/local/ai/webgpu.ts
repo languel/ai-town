@@ -9,6 +9,8 @@
 
 import { getSettings } from '../db/settings';
 import { LLMError } from './http';
+import { catalogEntry } from './webgpuCatalog';
+import { chooseVariant, fetchModelDetail, type ModelVariant } from './hub';
 import type { ChatOptions } from './chat';
 
 type PipelineKind = 'text-generation' | 'feature-extraction';
@@ -64,21 +66,84 @@ async function loadTransformers(): Promise<any> {
   if (!cdnUrl) {
     throw new LLMError('Set "transformers.js URL" in Settings to enable in-browser inference.', false);
   }
+  // Resolved at runtime only, so the bundler leaves the URL alone.
+  const moduleUrl = /^[a-z]+:/i.test(cdnUrl) ? cdnUrl : new URL(cdnUrl, document.baseURI).href;
   try {
-    // Resolved at runtime only, so the bundler leaves the URL alone.
-    const moduleUrl = /^[a-z]+:/i.test(cdnUrl)
-      ? cdnUrl
-      : new URL(cdnUrl, document.baseURI).href;
     // vite:import-analysis matches the pragma on a single line, hence the temp.
     transformersModule = await import(/* @vite-ignore */ moduleUrl);
-  } catch (e: any) {
+  } catch (firstError: any) {
+    // A bare `@version` URL resolves through the package's export map, which
+    // not every CDN honours - jsDelivr's explicit ESM entry always does.
+    const esm = moduleUrl.replace(/\/$/, '') + '/+esm';
+    if (/@huggingface\/transformers@[^/]+$/.test(moduleUrl)) {
+      try {
+        transformersModule = await import(/* @vite-ignore */ esm);
+        return transformersModule;
+      } catch {
+        /* report the original failure below */
+      }
+    }
     throw new LLMError(
-      'Could not load transformers.js from ' + cdnUrl + ': ' + (e?.message ?? e) + '. ' +
-        'For an air-gapped setup, save the module to public/vendor/transformers.js and set that URL in Settings.',
+      'Could not load transformers.js from ' + cdnUrl + ': ' + (firstError?.message ?? firstError) + '. ' +
+        'Try the ESM entry (' + esm + '), or for an air-gapped setup save the module to ' +
+        'public/vendor/transformers.js and set that URL in Settings.',
       false,
     );
   }
   return transformersModule;
+}
+
+const dtypeWarnings = new Map<string, string>();
+
+/**
+ * Which precision to ask the hub for.
+ *
+ * `auto` (the default) looks the repo's own `onnx/model*.onnx` files up and takes
+ * the smallest one this device can run - that is the only way a repo like
+ * LiquidAI/LFM2.5 works, since its q8 export has no WebGPU kernels while q4
+ * does. Offline we fall back to the curated hint, then to the legacy behaviour.
+ */
+async function resolveDtype(model: string, kind: PipelineKind, device: 'webgpu' | 'wasm'): Promise<string | undefined> {
+  const { webgpu } = getSettings().ai;
+  const task = kind === 'text-generation' ? 'text-generation' : 'feature-extraction';
+  const requested = kind === 'text-generation' ? webgpu.dtype : webgpu.embeddingDtype;
+  const legacy = webgpu.quantized
+    ? 'q8'
+    : kind === 'text-generation' && device === 'webgpu'
+      ? 'fp16'
+      : undefined;
+  if (requested && requested !== 'auto') return requested;
+
+  const curated = catalogEntry(model);
+  let variants: ModelVariant[] | undefined;
+  try {
+    variants = (await fetchModelDetail(model)).variants;
+  } catch {
+    variants = undefined;
+  }
+  if (variants?.length) {
+    const wanted = curated?.dtype;
+    const pick =
+      (wanted ? variants.find((v) => v.dtype === wanted && (device === 'wasm' || v.webgpuSafe)) : null) ??
+      chooseVariant(variants, device, task);
+    if (pick) {
+      if (wanted && pick.dtype !== wanted) {
+        dtypeWarnings.set(model, `repo has no ${wanted} export for ${device}; using ${pick.dtype} (${pick.bytes ? Math.round(pick.bytes / 1024 / 1024) + 'MB' : '?'}).`);
+      }
+      return pick.dtype;
+    }
+    throw new LLMError(
+      `${model} has no ONNX export transformers.js can load (found: ` +
+        variants.map((v) => v.dtype).join(', ') +
+        ').',
+      false,
+    );
+  }
+  return curated?.dtype ?? legacy;
+}
+
+export function peekDtypeWarning(model: string): string | undefined {
+  return dtypeWarnings.get(model);
 }
 
 async function getPipeline(kind: PipelineKind): Promise<any> {
@@ -86,7 +151,7 @@ async function getPipeline(kind: PipelineKind): Promise<any> {
   const model = kind === 'text-generation' ? webgpu.chatModel : webgpu.embeddingModel;
   if (!model) throw new LLMError('Set the ' + kind + ' model id in Settings.', false);
   const device = (await hasWebgpu()) ? webgpu.device : 'wasm';
-  const key = kind + ':' + model + ':' + device + ':' + (webgpu.quantized ? 'q' : 'f');
+  const key = kind + ':' + model + ':' + device + ':' + (kind === 'text-generation' ? webgpu.dtype : webgpu.embeddingDtype);
   const existing = pipelines.get(key);
   if (existing) return existing;
 
@@ -98,8 +163,10 @@ async function getPipeline(kind: PipelineKind): Promise<any> {
     } catch {
       /* older builds don't expose env */
     }
+    const dtype = await resolveDtype(model, kind, device);
     const options: any = {
       device,
+      ...(dtype ? { dtype } : {}),
       progress_callback: (item: any) => {
         if (!item?.file) return;
         progress.set(String(item.file), {
@@ -110,8 +177,6 @@ async function getPipeline(kind: PipelineKind): Promise<any> {
         notify();
       },
     };
-    if (webgpu.quantized) options.dtype = 'q8';
-    else if (kind === 'text-generation' && device === 'webgpu') options.dtype = 'fp16';
     return transformers.pipeline(kind, model, options);
   })()
     .then((pipeline) => {
@@ -136,6 +201,26 @@ export async function warmupWebgpu(): Promise<void> {
   const jobs: Promise<any>[] = [getPipeline('feature-extraction')];
   if (getSettings().ai.webgpu.chatModel) jobs.push(getPipeline('text-generation'));
   await Promise.all(jobs);
+}
+
+/**
+ * Small instruct models with a thinking mode (Qwen3, LFM2.5-Thinking) happily
+ * spend their whole budget narrating. Drop the block, and if all we got was a
+ * block, fall back to the raw text so the agent never says nothing.
+ */
+export function stripReasoning(text: string): string {
+  if (!text) return text;
+  if (!/<\s*(thinking|think|reasoning|\|thinking\|)>/i.test(text)) return text;
+  const closed = text.replace(/<\s*(thinking|think|reasoning)\s*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+  const open = closed.replace(/[\s\S]*<\s*(?:thinking|think|reasoning)\s*>/i, '');
+  const withoutTags = open.replace(/<\s*\/?\s*(?:thinking|think|reasoning)\s*>/gi, '');
+  const candidate = withoutTags.trim();
+  if (!candidate) {
+    // Unterminated: keep whatever followed the tag, else return the original.
+    const tail = text.split(/<\s*\/\s*(?:thinking|think|reasoning)\s*>/i).pop() ?? '';
+    return tail.replace(/<\s*\/?\s*(?:thinking|think|reasoning)\s*>/gi, '').trim() || text.trim();
+  }
+  return candidate;
 }
 
 export async function webgpuChat(options: ChatOptions): Promise<string> {
@@ -167,7 +252,8 @@ export async function webgpuChat(options: ChatOptions): Promise<string> {
     const at = text.indexOf(word);
     if (at >= 0) text = text.slice(0, at);
   }
-  const line = text.trim().split('\n')[0] ?? '';
+  if (getSettings().ai.webgpu.stripReasoning) text = stripReasoning(text);
+  const line = text.trim().split('\n').filter(Boolean).pop() ?? '';
   return line.replace(/^assistant:?\s*/i, '').trim();
 }
 
@@ -186,6 +272,7 @@ export async function webgpuEmbeddings(texts: string[]): Promise<number[][]> {
 
 export function resetPipelines() {
   pipelines.clear();
+  dtypeWarnings.clear();
   ready = false;
   lastError = null;
   transformersModule = null;

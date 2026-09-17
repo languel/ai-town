@@ -1,3 +1,4 @@
+import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from '../ai/webgpuCatalog';
 /**
  * Settings live in localStorage: they're small, they need to be readable before
  * the async database opens, and they're the thing a user wants to survive a
@@ -15,6 +16,10 @@ export type ProviderKind =
 
 export type EmbeddingSource = 'provider' | 'webgpu' | 'hash' | 'off';
 
+/** transformers.js `dtype`, or `auto` = ask the repo what it publishes. */
+export type DTypeChoice = 'auto' | 'q4' | 'q4f16' | 'fp16' | 'fp32' | 'q8';
+export const DTYPE_CHOICES: DTypeChoice[] = ['auto', 'q4', 'q4f16', 'fp16', 'fp32', 'q8'];
+
 export type Settings = {
   ai: {
     provider: ProviderKind;
@@ -31,13 +36,25 @@ export type Settings = {
     embeddingModel: string;
     embeddingBaseUrl: string;
     embeddingApiKey: string;
+    /** Hub API used to list downloadable models; empty = huggingface.co. */
+    hubBase: string;
     webgpu: {
       /** Where to `import()` transformers.js from. */
       cdnUrl: string;
       device: 'webgpu' | 'wasm';
       chatModel: string;
       embeddingModel: string;
-      /** Smaller download, slightly lower quality. */
+      /**
+       * Which precision to pull from the repo. `auto` asks the hub which
+       * `onnx/model*.onnx` files exist and takes the smallest one the device can
+       * run - which matters because e.g. Liquid's LFM2.5 has no WebGPU q8.
+       */
+      dtype: DTypeChoice;
+      /** Same knob for the feature-extraction model (q8 is the safe default there). */
+      embeddingDtype: DTypeChoice;
+      /** Drop  blocks some chat models emit before the actual line. */
+      stripReasoning: boolean;
+      /** Legacy alias for dtype 'q8'; kept so old profiles still merge. */
       quantized: boolean;
     };
     /** Max concurrent LLM requests fired by the town. */
@@ -89,11 +106,17 @@ export const DEFAULT_SETTINGS: Settings = {
     embeddingModel: 'text-embedding-3-small',
     embeddingBaseUrl: '',
     embeddingApiKey: '',
+    hubBase: '',
     webgpu: {
-      cdnUrl: 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.5',
+      // v4 of transformers.js is what ships the lfm2 / lfma2_vl / q4 kernels, so
+      // the CDN default tracks it. Swap the URL (or the version below) to pin.
+      cdnUrl: 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0/dist/transformers.web.js',
       device: 'webgpu',
-      chatModel: 'onnx-community/Llama-3.2-1B-Instruct',
-      embeddingModel: 'Xenova/all-MiniLM-L6-v2',
+      chatModel: DEFAULT_CHAT_MODEL,
+      embeddingModel: DEFAULT_EMBEDDING_MODEL,
+      dtype: 'auto',
+      embeddingDtype: 'auto',
+      stripReasoning: true,
       quantized: true,
     },
     concurrency: 2,

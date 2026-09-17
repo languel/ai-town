@@ -40,10 +40,43 @@ page to the endpoint you configure.
 - **OpenAI / OpenRouter** — paste `sk-…`. Note that `api.openai.com` rejects browser origins for
   some keys; **OpenRouter works from the browser** and is the easiest hosted option. Anything that
   speaks the OpenAI protocol fits "OpenAI-compatible" (vLLM, llama.cpp server, Groq, Fireworks…).
-- **In-browser WebGPU** — transformers.js runs a quantized 1B–3B model on your GPU with no server at
-  all. Choose the model, hit *Download / warm up*, and it stays cached by the browser. Needs a
+- **In-browser WebGPU / ONNX** - transformers.js runs a quantized 1B-3B model on your GPU with no
+  server at all. Pick a model, hit *Download / warm up*, and it stays cached by the browser. Needs a
   Chromium-ish browser with `--enable-unsafe-webgpu` on some setups; the panel tells you whether
-  WebGPU was detected.
+  WebGPU was detected. See *Choosing a model* below.
+
+### Choosing a model
+
+Both model fields (chat and embeddings) are comboboxes with a **Refresh list** button. Nothing is
+hardcoded: the list is three sources merged, in this order, and de-duplicated by repo id.
+
+1. **Built-in catalogue** (`src/local/ai/webgpuCatalog.ts`) - repos verified to load in a tab, with a
+   recommended precision and rough size each. Works with the network off, which is why the picker is
+   never empty.
+2. **Hub scan** (`src/local/ai/hub.ts`) - `GET /api/models?library=transformers.js&pipeline_tag=…`
+   (plus `search=<what you typed>`), sorted by downloads, capped at 50 rows, cached for 6 h and
+   mirrored into `localStorage` so the panel opens instantly. Set `Hub API base URL` to point at a
+   mirror (`https://hf-mirror.com`) or your own static `models.json` host on an air-gapped box.
+3. **Your own server**, for the HTTP providers: Ollama's `/api/tags` (size, quantisation, parameter
+   count included) or `<base>/models` for LM Studio / vLLM / llama.cpp server, and OpenRouter's
+   public catalogue with context length and price.
+
+Typing narrows the list; the browser's native combobox does the filtering, and you can always type a
+repo id that is in no list at all.
+
+**Precision.** `auto` (default) reads the chosen repo's `onnx/model*.onnx` listing and takes the
+smallest export the device can run - on WASM that is usually `q8`, on WebGPU whatever quantized
+variant exists, falling back to `fp16`/`fp32`. The chips under the field show what the repo actually
+publishes (`q4 811MB · q8 1.2GB · fp16 1.9GB …`) and clicking one pins that dtype for the slot.
+
+That lookup is not cosmetic: **Liquid AI's LFM2.5 exports have no WebGPU kernels for q8** - their own
+card says "use q4 or fp16" - so a build that always asks for q8 fails to load LFM2.5 models. They are
+all in the catalogue (`LFM2.5-1.2B-Instruct`, `-230M`, `-2.6B`, `-1.2B-Thinking`) and need
+transformers.js **4.x** (the `lfm2` / `lfm2_vl` / `lfm2_moe` architectures landed in 4.0.0), which is
+what the default CDN URL now points at; change the version in *transformers.js URL* to pin another.
+The `-Thinking` variants and Qwen3 like to narrate their reasoning before answering, so the
+`Strip thinking blocks` option (on by default) removes the `<thinking>` wrapper and keeps the
+actual line - including when the model runs out of tokens mid-thought.
 
 Embeddings are used for memory retrieval only. If the embedding source fails, the app falls back to
 a local hashed bag-of-words vector (384-dim), which is worse but keeps retrieval working. A broken
@@ -59,8 +92,8 @@ unavailable (private windows), it degrades to a memory-only session and says so 
 Tables intentionally mirror the old Convex schema — `world`, `maps`, `characters`,
 `playerDescriptions`, `agentDescriptions`, `messages`, `conversations`, `participatedTogether`,
 `memories`, `embeddingsCache`, `logs`, `images`. Settings and prompt overrides live in
-`localStorage` (`aifavella.settings`, `aifavella.prompts`) because they must be readable before the
-database opens.
+`localStorage` (`aifavella.settings`, `aifavella.prompts`, `aifavella.modelList`, `aifavella.hubCache`)
+because they must be readable before the database opens.
 
 **Portability:** 💾 Data → *download world* writes one JSON file with every table plus settings
 (there's a "no key" variant for sharing). Import on another browser/machine and the world —
@@ -82,6 +115,10 @@ src/local/
     chat.ts             one chatCompletion() → dispatches to a provider
     providers.ts        OpenAI-compatible HTTP, OpenRouter, Ollama, embeddings
     webgpu.ts           transformers.js runtime (lazy import, model cache, status)
+    hub.ts              Hugging Face hub client: model search, file lists, variant/precision maths,
+                        browser-cache scan. Pure helpers so the test can feed fixtures.
+    webgpuCatalog.ts    the built-in (offline) list of models that are known to load
+    modelList.ts        merges built-in + hub scan + your server's own /models into one dropdown
     mock.ts             the offline improviser
     prompts.ts          the 6 editable templates ({{var}} rendering)
     http.ts             fetch + SSE parsing, retries, stop-word cutting
@@ -91,7 +128,8 @@ src/local/
   db/                   IndexedDB store, settings, export/import bundles
   sim/runtime.ts        SimRuntime: 30 Hz loop, op queue with concurrency, autosave, seed
   data/                 default cast, sprite sheets, map loading, tileset presets
-  ui/                   Pixi renderer, viewport, chat panel, personality + map editors, settings, data
+  ui/                   Pixi renderer, viewport, chat panel, personality + map editors, settings,
+                        data browser, ModelField (the model dropdown with Refresh list)
   state.tsx             useTown/useSettings/… on top of useSyncExternalStore
 ```
 
@@ -128,8 +166,9 @@ npm run test:invite  # stress: 25 rounds of inviting an agent and getting an ans
 ```
 
 `scripts/smoke.ts` (bundled by esbuild, so no test framework is needed) boots the real stack in
-Node - `MemoryKVStore` instead of IndexedDB, the mock provider instead of a model - and runs 31
-assertions: the map serializes back identically including tile `0`, the cast spawns and persists
+Node - `MemoryKVStore` instead of IndexedDB, the mock provider instead of a model - and runs 50
+assertions (the model-list ones feed it captured hub payloads, so a response-format change is caught
+here and not in the dropdown): the map serializes back identically including tile `0`, the cast spawns and persists
 across a reload, agents actually walk around and talk to each other, conversations get archived and
 become memories that cosine retrieval finds, a human can join, be asked to talk, send a message and
 get a reply, personality edits reach the live agent, activities expire against the simulation clock,

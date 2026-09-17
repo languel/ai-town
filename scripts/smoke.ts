@@ -13,6 +13,22 @@ import { hashEmbedding } from '../src/local/ai/providers.ts';
 import { updateSettings } from '../src/local/db/settings.ts';
 import { improvise } from '../src/local/ai/mock.ts';
 import { memoryCount } from '../src/local/ai/memory.ts';
+import {
+  chooseVariant,
+  formatBytes,
+  parseModelDetail,
+  toModelSummary,
+  variantsFromSiblings,
+} from '../src/local/ai/hub.ts';
+import { mergeChoices, refreshModelList } from '../src/local/ai/modelList.ts';
+import { stripReasoning } from '../src/local/ai/webgpu.ts';
+import {
+  DEFAULT_CHAT_MODEL,
+  WEBGPU_CATALOG,
+  isKnownArchitecture,
+  webgpuBlockedDtypes,
+} from '../src/local/ai/webgpuCatalog.ts';
+import { getSettings } from '../src/local/db/settings.ts';
 
 let failures = 0;
 function check(label: string, ok: boolean, extra = '') {
@@ -389,6 +405,184 @@ async function main() {
   const c = hashEmbedding('entirely different sentence about soup');
   check('hashed embeddings are deterministic', JSON.stringify(a) === JSON.stringify(b));
   check('and differentiate text', JSON.stringify(a) !== JSON.stringify(c) && a.length === 384);
+
+  // --- webgpu / onnx model list -------------------------------------------
+  // Shapes below are the hub API's own payloads (captured 2026-09-17), so a
+  // response-format change shows up here rather than as a broken dropdown.
+  const liquidSiblings = [
+    { rfilename: 'README.md', size: 6508 },
+    { rfilename: 'chat_template.jinja', size: 1783 },
+    { rfilename: 'onnx/model.onnx', size: 140810 },
+    { rfilename: 'onnx/model.onnx_data', size: 2063007744 },
+    { rfilename: 'onnx/model.onnx_data_1', size: 2072240128 },
+    { rfilename: 'onnx/model_fp16.onnx', size: 140027 },
+    { rfilename: 'onnx/model_fp16.onnx_data', size: 2067623936 },
+    { rfilename: 'onnx/model_q4.onnx', size: 183173 },
+    { rfilename: 'onnx/model_q4.onnx_data', size: 850059264 },
+    { rfilename: 'onnx/model_q8.onnx', size: 150000 },
+    { rfilename: 'onnx/model_q8.onnx_data', size: 1300000000 },
+  ];
+  const liquidVariants = variantsFromSiblings(liquidSiblings, 'lfm2');
+  check(
+    'a repo\'s file list becomes loadable precisions',
+    ['fp32', 'fp16', 'q4', 'q8'].every((d) => liquidVariants.some((v) => v.dtype === d)),
+    liquidVariants.map((v) => `${v.dtype}:${formatBytes(v.bytes)}`).join(' '),
+  );
+  const liquidQ4 = liquidVariants.find((v) => v.dtype === 'q4');
+  check(
+    'weights shards are counted towards the variant size',
+    !!liquidQ4 && liquidQ4.sharded && liquidQ4.bytes > 850_000_000,
+    liquidQ4 ? formatBytes(liquidQ4.bytes) : '-',
+  );
+  check('and the cheapest export is offered first', liquidVariants[0].dtype === 'q4');
+  check(
+    'LFM2.5 q8 is marked unusable on WebGPU',
+    liquidVariants.find((v) => v.dtype === 'q8')?.webgpuSafe === false &&
+      webgpuBlockedDtypes('llama').length === 0,
+    `lfm2 blocks ${webgpuBlockedDtypes('lfm2').join('/')}`,
+  );
+  check('so auto precision picks q4 there', chooseVariant(liquidVariants, 'webgpu')?.dtype === 'q4');
+
+  const legacyVariants = variantsFromSiblings(
+    [
+      { rfilename: 'onnx/model.onnx', size: 900_000_000 },
+      { rfilename: 'onnx/model_quantized.onnx', size: 300_000_000 },
+      { rfilename: 'onnx/model_fp16.onnx', size: 200_000_000 },
+    ],
+    'llama',
+  );
+  check(
+    'legacy model_quantized.onnx maps to q8',
+    legacyVariants.some((v) => v.dtype === 'q8' && v.legacyQuantized),
+    legacyVariants.map((v) => v.dtype).join(','),
+  );
+  check(
+    'WebGPU takes the smallest safe export, WASM the int8 one',
+      chooseVariant(legacyVariants, 'webgpu')?.dtype === 'fp16' &&
+      chooseVariant(legacyVariants, 'wasm')?.dtype === 'q8',
+  );
+
+  const summary = toModelSummary({
+    id: 'LiquidAI/LFM2.5-1.2B-Instruct-ONNX',
+    tags: ['transformers.js', 'onnx', 'lfm2', 'text-generation', 'webgpu', 'conversational', 'en', 'ja', 'license:other'],
+    downloads: 3979,
+    likes: 36,
+    pipeline_tag: 'text-generation',
+    library_name: 'transformers.js',
+    lastModified: '2026-02-17T13:59:09.000Z',
+    config: { architectures: ['Lfm2ForCausalLM'], model_type: 'lfm2' },
+  });
+  check(
+    'a hub listing parses into a picker entry',
+    !!summary &&
+      summary.webgpu &&
+      summary.transformersJs &&
+      summary.conversational &&
+      summary.modelType === 'lfm2' &&
+      summary.license === 'other' &&
+      summary.languages.join(',') === 'en,ja',
+    JSON.stringify({ id: summary?.id, downloads: summary?.downloads, langs: summary?.languages }),
+  );
+  const detail = parseModelDetail({
+    id: 'some/repo',
+    config: { model_type: 'llama' },
+    siblings: liquidSiblings,
+    downloads: 5,
+  });
+  check(
+    'repo detail reports the chat template and size',
+    !!detail?.hasChatTemplate && (detail?.bytes ?? 0) > 8_000_000_000,
+    `${detail?.variants.length} variants, ${formatBytes(detail?.bytes ?? 0)}`,
+  );
+  check('empty hub rows are dropped', toModelSummary({ tags: [] }) === null);
+
+  check(
+    'thinking blocks never reach the town',
+    stripReasoning('<thinking>hmm, what to say</thinking>Sure, I can help.') === 'Sure, I can help.',
+    JSON.stringify(stripReasoning('<thinking>a</thinking>b')),
+  );
+  check(
+    'an unterminated block still leaves a line',
+    stripReasoning('<thinking>a').length > 0 && stripReasoning('Hello there.') === 'Hello there.',
+  );
+
+  const builtin = mergeChoices(
+    [{ id: 'a/b', label: 'A B', source: 'builtin', task: 'text-generation', dtype: 'q8', note: 'why' }],
+    [
+      { id: 'a/b', label: 'A B (hub)', source: 'hub', task: 'text-generation', downloads: 10 },
+      { id: 'c/d', label: 'C D', source: 'hub', task: 'text-generation', webgpu: true },
+    ],
+  );
+  check(
+    'the built-in hint wins over the hub row for the same repo',
+    builtin.length === 2 &&
+      builtin[0].dtype === 'q8' &&
+      builtin[0].downloads === 10 &&
+      builtin[1].id === 'c/d',
+    builtin.map((b) => `${b.id}:${b.source}`).join(' '),
+  );
+
+  // Refresh, with fetch stubbed both ways: the panel must fill from the hub when
+  // it can, and from the catalog when it cannot.
+  const realFetch = globalThis.fetch;
+  const providerBefore = getSettings().ai.provider;
+  updateSettings({ ai: { provider: 'webgpu' } } as any);
+  const hubRows = [
+    {
+      id: DEFAULT_CHAT_MODEL,
+      tags: ['transformers.js', 'onnx', 'llama', 'conversational'],
+      downloads: 310910,
+      likes: 222,
+      pipeline_tag: 'text-generation',
+      library_name: 'transformers.js',
+    },
+    {
+      id: 'someone/one-off-finetune',
+      tags: ['transformers.js', 'webgpu', 'onnx'],
+      downloads: 9,
+      likes: 1,
+      pipeline_tag: 'text-generation',
+    },
+  ];
+  const hubResponse = { ok: true, status: 200, statusText: 'OK', json: () => Promise.resolve(hubRows) };
+  globalThis.fetch = () => Promise.resolve(hubResponse) as any;
+  const scanned = await refreshModelList({ force: true });
+  check(
+    'refresh lists built-in models plus what the hub scan found',
+    scanned.chat.some((c) => c.source === 'builtin') &&
+      scanned.chat.some((c) => c.id === 'someone/one-off-finetune') &&
+      !scanned.offline,
+    `${scanned.chat.length} chat / ${scanned.embeddings.length} embedding options`,
+  );
+  check(
+    'scan results keep the precision we recommend for that repo',
+    scanned.chat.find((c) => c.id === DEFAULT_CHAT_MODEL)?.dtype === 'q8',
+    String(scanned.chat.find((c) => c.id === DEFAULT_CHAT_MODEL)?.dtype),
+  );
+  globalThis.fetch = (() => Promise.reject(new Error('no network'))) as any;
+  const stranded = await refreshModelList({ force: true });
+  check(
+    'an unreachable hub still offers the built-in list',
+    stranded.offline &&
+      !!stranded.error &&
+      stranded.chat.length >= 5 &&
+      WEBGPU_CATALOG.length > 8 &&
+      WEBGPU_CATALOG.every((e) => isKnownArchitecture(e.modelType)),
+    `${stranded.chat.length} offline options, ${
+      new Set(WEBGPU_CATALOG.map((e) => e.id)).size
+    } unique catalogue ids`,
+  );
+  globalThis.fetch = realFetch;
+  updateSettings({ ai: { provider: providerBefore } } as any);
+
+  const defaults = getSettings().ai;
+  check(
+    'the in-browser backend defaults to a transformers.js build with lfm2 kernels',
+    /@4\.\d+\.\d+/.test(defaults.webgpu.cdnUrl) &&
+      defaults.webgpu.chatModel === DEFAULT_CHAT_MODEL &&
+      defaults.webgpu.dtype === 'auto',
+    `${defaults.webgpu.cdnUrl.split('/').slice(-2).join('/')} · ${defaults.webgpu.chatModel}`,
+  );
 
   console.log(failures === 0 ? '\nSMOKE TEST PASSED' : `\n${failures} CHECK(S) FAILED`);
   process.exitCode = failures === 0 ? 0 : 1;
